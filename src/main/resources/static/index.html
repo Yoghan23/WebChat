@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wi-Fi Local Chat & DMs</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .container { display: flex; gap: 20px; max-width: 900px; margin: 0 auto; }
+    .sidebar { width: 250px; border: 1px solid #ccc; padding: 10px; border-radius: 5px; height: 400px; overflow-y: auto; }
+    .main-chat { flex-grow: 1; border: 1px solid #ccc; padding: 10px; border-radius: 5px; }
+    .chat-box { height: 300px; border: 1px solid #eee; overflow-y: scroll; padding: 10px; margin-bottom: 10px; background: #fafafa; }
+    .user-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #eee; border-radius: 4px; }
+    .user-item:hover { background-color: #e0f7fa; }
+    .active-target { font-weight: bold; color: #00796b; background: #e0f7fa; }
+    .dm-tag { color: #d32f2f; font-size: 0.85em; font-weight: bold; }
+    input[type="text"] { padding: 8px; }
+  </style>
+</head>
+<body>
+
+<div id="login-screen" style="text-align: center; margin-top: 50px;">
+  <h2>Enter Your Username to Join Local Wi-Fi Chat</h2>
+  <input type="text" id="username-input" placeholder="e.g. Alex-Laptop" />
+  <button onclick="joinChat()">Join Chat</button>
+</div>
+
+<div id="chat-screen" class="container" style="display: none;">
+  <div class="sidebar">
+    <h3>Connected Devices</h3>
+    <div id="user-list"></div>
+  </div>
+
+  <div class="main-chat">
+    <h3 id="chat-heading">Public Chat</h3>
+    <div id="chat-box" class="chat-box"></div>
+    <div style="display: flex; gap: 5px;">
+      <input type="text" id="message-input" style="flex-grow: 1;" placeholder="Type a message..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let socket;
+  let currentUser = "";
+  let activeTarget = "PUBLIC"; // "PUBLIC" or username for DMs
+  const allMessages = []; // Client-side store for all received messages
+
+  function joinChat() {
+    const username = document.getElementById("username-input").value.trim();
+    if (!username) return alert("Please enter a username");
+
+    currentUser = username;
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    socket = new WebSocket(`${wsProtocol}//${location.host}/ws-chat`);
+
+    socket.onopen = function() {
+      socket.send(JSON.stringify({ type: "JOIN", sender: currentUser }));
+      document.getElementById("login-screen").style.display = "none";
+      document.getElementById("chat-screen").style.display = "flex";
+    };
+
+    socket.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "USER_LIST") {
+        updateUserList(JSON.parse(data.content));
+      } else if (data.type === "CHAT" || data.type === "DM") {
+        // Store message locally
+        allMessages.push(data);
+        // Re-render current chat view
+        renderMessages();
+      }
+    };
+  }
+
+  function updateUserList(users) {
+    const listDiv = document.getElementById("user-list");
+
+    let html = `<div class="user-item ${activeTarget === 'PUBLIC' ? 'active-target' : ''}" onclick="selectTarget('PUBLIC')">🌐 Public Chatroom</div>`;
+
+    users.forEach(user => {
+      if (user !== currentUser) {
+        const isSelected = activeTarget === user ? 'active-target' : '';
+        html += `<div class="user-item ${isSelected}" onclick="selectTarget('${user}')">📱 ${user}</div>`;
+      }
+    });
+
+    listDiv.innerHTML = html;
+  }
+
+  function selectTarget(target) {
+    activeTarget = target;
+    document.getElementById("chat-heading").innerText = target === "PUBLIC" ? "Public Chat" : `Direct Message with ${target}`;
+
+    // Refresh sidebar active states
+    const items = document.querySelectorAll(".user-item");
+    items.forEach(el => el.classList.remove("active-target"));
+
+    // Re-render chat box with stored messages for selected target
+    renderMessages();
+  }
+
+  function renderMessages() {
+    const chatBox = document.getElementById("chat-box");
+    chatBox.innerHTML = ""; // Clear current view before re-populating
+
+    allMessages.forEach(msg => {
+      if (activeTarget === "PUBLIC" && msg.type === "CHAT") {
+        // Show public messages in Public tab
+        chatBox.innerHTML += `<div><b>${msg.sender}:</b> ${msg.content}</div>`;
+      } else if (activeTarget !== "PUBLIC" && msg.type === "DM") {
+        // Show DMs relevant to active target
+        const isFromTarget = (msg.sender === activeTarget && msg.recipient === currentUser);
+        const isToTarget = (msg.sender === currentUser && msg.recipient === activeTarget);
+
+        if (isFromTarget || isToTarget) {
+          const tag = `<span class="dm-tag">[DM]</span>`;
+          chatBox.innerHTML += `<div>${tag} <b>${msg.sender}:</b> ${msg.content}</div>`;
+        }
+      }
+    });
+
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function sendMessage() {
+    const input = document.getElementById("message-input");
+    const text = input.value.trim();
+    if (!text) return;
+
+    const payload = {
+      type: activeTarget === "PUBLIC" ? "CHAT" : "DM",
+      sender: currentUser,
+      recipient: activeTarget === "PUBLIC" ? null : activeTarget,
+      content: text
+    };
+
+    socket.send(JSON.stringify(payload));
+    input.value = "";
+  }
+</script>
+</body>
+</html>
